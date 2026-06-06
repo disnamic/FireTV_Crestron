@@ -1,0 +1,371 @@
+/*
+  FireTV_Control_v2.0.usp
+  SIMPL+ Module – Amazon Fire TV Control via ADB over IP
+
+  Version      : 2.0
+  Date         : 2026-06-02
+  Platform     : Crestron 3-Series (CP3, MC3, PRO3, AV3) and 4-Series (CP4, MC4)
+  Library      : FireTVADB_3Series.clz  (.NET CF 3.5 / SimplSharp)  — 3-Series
+               : FireTVADB.clz          (.NET 4.7.2 / SimplSharpPro) — 4-Series
+*/
+
+#SYMBOL_NAME "FireTV ADB Control v2.0"
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+
+#HELP_BEGIN
+  FireTV ADB Control v2.0
+  Controls Amazon Fire TV via ADB over TCP/IP (port 5555).
+
+  ── PREREQUISITES ───────────────────────────────────────────────────────────
+  On the Fire TV:
+    Settings → My Fire TV → Developer Options
+      ADB Debugging      ON
+      Network Debugging  ON  (port 5555)
+
+  ── PARAMETERS ──────────────────────────────────────────────────────────────
+  FireTV_IP$         IP address of the Fire TV
+  FireTV_Port        TCP port (default 5555)
+  Key_Store_Path$    RSA key file on controller flash
+                     Default: \user\FireTV_ADBKey.xml
+                     Empty = in-memory only (re-confirm on TV after reboot)
+  Poll_Interval_Sec  Polling interval for app/volume/NowPlaying (2-20s)
+  WOL_Mac$           MAC address for Wake-on-LAN
+  WOL_Broadcast_IP$  Broadcast address for WOL (default 255.255.255.255)
+
+  ── FIRST CONNECT ───────────────────────────────────────────────────────────
+  1. Set FireTV_IP$ parameter and pulse Connect.
+  2. A dialog appears on the TV: "Allow USB debugging?"
+     Check "Always allow from this computer" and confirm.
+  3. All subsequent connections are automatic (key stored in Key_Store_Path$).
+
+  ── APP LAUNCH ──────────────────────────────────────────────────────────────
+  Launch_App$ expects "package/Activity" format.
+  Use Get_Launchable_Apps to discover installed apps:
+    Pulse Get_Launchable_Apps → App_Launch$[1..N] is populated.
+    Pass any App_Launch$[N] directly to Launch_App$.
+
+  Device-specific examples (verify with Get_Launchable_Apps):
+    Prime Video : com.amazon.firebat/com.amazon.pyrocore.IgnitionActivity
+    Netflix     : com.netflix.ninja/.MainActivity
+    YouTube     : com.amazon.firetv.youtube/dev.cobalt.app.MainActivity
+    Disney+     : com.disney.disneyplus/com.bamtechmedia.dominguez.main.MainActivity
+    Kodi        : org.xbmc.kodi/.Splash
+
+  ── SHELL ACCESS ────────────────────────────────────────────────────────────
+  Send_Shell$    Raw ADB shell command (without "adb shell" prefix)
+  Shell_fb$      Output, delivered in chunks of up to 250 bytes
+
+  Useful commands for Send_Shell$:
+    ip addr show wlan0              Get IP and MAC address
+    dumpsys battery                 Power / battery state
+    getprop ro.build.version.release  Fire OS version
+
+  ── NOWPLAYING ──────────────────────────────────────────────────────────────
+  Polled via dumpsys media_session at the configured interval.
+  NowPlaying_App$  Package name of the active media app
+  Is_Playing       1=Playing (PlaybackState=3), 0=Paused/Stopped
+  Note: Netflix and most streaming apps suppress title/artist metadata.
+
+  ── NOTES ───────────────────────────────────────────────────────────────────
+  - Connect does NOT fire automatically on program start.
+  - Auto-reconnect is active after an unexpected disconnect (10s interval).
+  - Set_Volume_Level controls STREAM_MUSIC (stream 3), range 0-15.
+  - WOL is rarely needed as Fire TV keeps its network stack alive in suspend.
+    To get the MAC: send "ip addr show wlan0" to Send_Shell$ and read Shell_fb$.
+#HELP_END
+
+#IF_SERIES3
+#USER_SIMPLSHARP_LIBRARY "FireTVADB_3Series"
+#ENDIF
+#IF_SERIES4
+#USER_SIMPLSHARP_LIBRARY "FireTVADB"
+#ENDIF
+
+/*──────────────────────────────────────────────────────────────────────────────────
+  PARAMETERS
+──────────────────────────────────────────────────────────────────────────────────*/
+STRING_PARAMETER  FireTV_IP$[64];
+INTEGER_PARAMETER FireTV_Port;
+STRING_PARAMETER  Key_Store_Path$[128];
+INTEGER_PARAMETER Poll_Interval_Sec;
+STRING_PARAMETER  WOL_Mac$[20];
+STRING_PARAMETER  WOL_Broadcast_IP$[20];
+
+#BEGIN_PARAMETER_PROPERTIES FireTV_IP$
+  propValidUnits       = unitString;
+  propDefaultValue     = "";
+  propShortDescription = "IP address of the Fire TV";
+#END_PARAMETER_PROPERTIES
+
+#BEGIN_PARAMETER_PROPERTIES FireTV_Port
+  propValidUnits       = unitDecimal;
+  propDefaultValue     = 5555d;
+  propShortDescription = "TCP port (default: 5555)";
+#END_PARAMETER_PROPERTIES
+
+#BEGIN_PARAMETER_PROPERTIES Key_Store_Path$
+  propValidUnits       = unitString;
+  propDefaultValue     = "\\user\\FireTV_ADBKey.xml";
+  propShortDescription = "RSA key file path (empty = no persistence)";
+#END_PARAMETER_PROPERTIES
+
+#BEGIN_PARAMETER_PROPERTIES Poll_Interval_Sec
+  propValidUnits   = unitDecimal;
+  propDefaultValue = 5d;
+  propList = { 2d,"2s"  },{ 3d,"3s"  },{ 4d,"4s"  },{ 5d,"5s"  },
+             { 6d,"6s"  },{ 7d,"7s"  },{ 8d,"8s"  },{ 9d,"9s"  },
+             { 10d,"10s"},{ 11d,"11s"},{ 12d,"12s"},{ 13d,"13s"},
+             { 14d,"14s"},{ 15d,"15s"},{ 16d,"16s"},{ 17d,"17s"},
+             { 18d,"18s"},{ 19d,"19s"},{ 20d,"20s"};
+  propShortDescription = "Polling interval for app, volume and NowPlaying";
+#END_PARAMETER_PROPERTIES
+
+#BEGIN_PARAMETER_PROPERTIES WOL_Mac$
+  propValidUnits       = unitString;
+  propDefaultValue     = "";
+  propShortDescription = "MAC address for Wake-on-LAN (AA:BB:CC:DD:EE:FF)";
+#END_PARAMETER_PROPERTIES
+
+#BEGIN_PARAMETER_PROPERTIES WOL_Broadcast_IP$
+  propValidUnits       = unitString;
+  propDefaultValue     = "255.255.255.255";
+  propShortDescription = "Broadcast address for WOL (default: 255.255.255.255)";
+#END_PARAMETER_PROPERTIES
+
+/*──────────────────────────────────────────────────────────────────────────────────
+  DIGITAL INPUTS
+──────────────────────────────────────────────────────────────────────────────────*/
+DIGITAL_INPUT  _SKIP_,_SKIP_,_SKIP_,_SKIP_,_SKIP_,_SKIP_;
+
+
+DIGITAL_INPUT  Console_Log_Output_Enable;
+
+DIGITAL_INPUT  _SKIP_;
+
+DIGITAL_INPUT  Connect;
+DIGITAL_INPUT  Disconnect;
+
+DIGITAL_INPUT  _SKIP_;
+
+DIGITAL_INPUT  Btn_Home;
+DIGITAL_INPUT  Btn_Back;
+DIGITAL_INPUT  Btn_Menu;
+DIGITAL_INPUT  Btn_Up;
+DIGITAL_INPUT  Btn_Down;
+DIGITAL_INPUT  Btn_Left;
+DIGITAL_INPUT  Btn_Right;
+DIGITAL_INPUT  Btn_Select;
+
+DIGITAL_INPUT  _SKIP_;
+
+DIGITAL_INPUT  Btn_Play;
+DIGITAL_INPUT  Btn_Pause;
+DIGITAL_INPUT  Btn_PlayPause;
+DIGITAL_INPUT  Btn_Stop;
+DIGITAL_INPUT  Btn_FastForward;
+DIGITAL_INPUT  Btn_Rewind;
+DIGITAL_INPUT  Btn_SkipForward;
+DIGITAL_INPUT  Btn_SkipBack;
+
+DIGITAL_INPUT  _SKIP_;
+
+DIGITAL_INPUT  Vol_Up;
+DIGITAL_INPUT  Vol_Down;
+DIGITAL_INPUT  Vol_Mute;
+
+DIGITAL_INPUT  _SKIP_;
+
+DIGITAL_INPUT  Power_Toggle;
+DIGITAL_INPUT  Btn_Search;
+DIGITAL_INPUT  Btn_Settings;
+
+DIGITAL_INPUT  _SKIP_;
+
+DIGITAL_INPUT  Poll_Now;
+DIGITAL_INPUT  WOL_Send;
+
+DIGITAL_INPUT  _SKIP_;
+
+DIGITAL_INPUT  Get_Launchable_Apps;
+
+/*──────────────────────────────────────────────────────────────────────────────────
+  ANALOG INPUTS
+──────────────────────────────────────────────────────────────────────────────────*/
+ANALOG_INPUT   Set_Volume_Level;
+
+/*──────────────────────────────────────────────────────────────────────────────────
+  STRING INPUTS
+──────────────────────────────────────────────────────────────────────────────────*/
+STRING_INPUT   Launch_App$[256];
+STRING_INPUT   Send_Shell$[512];
+STRING_INPUT   Input_Text$[256];
+
+/*──────────────────────────────────────────────────────────────────────────────────
+  DIGITAL OUTPUTS
+──────────────────────────────────────────────────────────────────────────────────*/
+DIGITAL_OUTPUT  _SKIP_,_SKIP_,_SKIP_,_SKIP_,_SKIP_,_SKIP_,_SKIP_,_SKIP_;
+
+DIGITAL_OUTPUT Is_Connected;
+DIGITAL_OUTPUT Is_Playing;        // NEW v1.3.8
+
+/*──────────────────────────────────────────────────────────────────────────────────
+  ANALOG OUTPUTS
+──────────────────────────────────────────────────────────────────────────────────*/
+ANALOG_OUTPUT  Volume_Level;
+ANALOG_OUTPUT  Volume_Max;
+
+/*──────────────────────────────────────────────────────────────────────────────────
+  STRING OUTPUTS
+──────────────────────────────────────────────────────────────────────────────────*/
+STRING_OUTPUT  Current_App$;
+STRING_OUTPUT  NowPlaying_App$;
+// Launchable apps list (populated by Get_Launchable_Apps)
+STRING_OUTPUT  _SKIP_,Shell_fb$;           // Shell output, chunked to 250 bytes per update
+STRING_OUTPUT  _SKIP_,App_Launch$[50];
+
+
+/*──────────────────────────────────────────────────────────────────────────────────
+  INTERNAL VARIABLES
+──────────────────────────────────────────────────────────────────────────────────*/
+FireTVDriver   _driver;
+
+/*══════════════════════════════════════════════════════════════════════════════════
+  CALLBACKS
+══════════════════════════════════════════════════════════════════════════════════*/
+
+CALLBACK FUNCTION Hdl_ConnectionChanged(INTEGER status)
+{
+    Is_Connected = status;
+    If (status)  Print("[FireTV] ADB connected\n");
+    Else         Print("[FireTV] ADB disconnected\n");
+}
+
+CALLBACK FUNCTION Hdl_CurrentAppChanged(STRING app)  { Current_App$        = app;   }
+CALLBACK FUNCTION Hdl_NowPlayingApp(STRING text)     { NowPlaying_App$     = text;  }
+CALLBACK FUNCTION Hdl_IsPlaying(INTEGER state)       { Is_Playing          = state; }
+
+// FIX-5: chunking done in C# driver — each callback call is already ≤250 bytes
+CALLBACK FUNCTION Hdl_ShellFeedback(STRING text) { Shell_fb$ = text; }
+
+CALLBACK FUNCTION Hdl_VolumeLevelChanged(INTEGER level, INTEGER maxLevel)
+{
+    Volume_Level = level;
+    Volume_Max   = maxLevel;
+}
+
+/*══════════════════════════════════════════════════════════════════════════════════
+  CONSOLE / CONNECTION
+══════════════════════════════════════════════════════════════════════════════════*/
+
+CHANGE Console_Log_Output_Enable { _driver.SetConsoleLog(Console_Log_Output_Enable); }
+
+PUSH Connect
+{
+    _driver.Initialize(FireTV_IP$, FireTV_Port, Key_Store_Path$);
+    _driver.Connect();
+}
+PUSH Disconnect { _driver.Disconnect(); }
+
+/*══════════════════════════════════════════════════════════════════════════════════
+  NAVIGATION
+══════════════════════════════════════════════════════════════════════════════════*/
+
+PUSH Btn_Home    { _driver.SendKeyEvent(3);  }
+PUSH Btn_Back    { _driver.SendKeyEvent(4);  }
+PUSH Btn_Menu    { _driver.SendKeyEvent(82); }
+PUSH Btn_Up      { _driver.SendKeyEvent(19); }
+PUSH Btn_Down    { _driver.SendKeyEvent(20); }
+PUSH Btn_Left    { _driver.SendKeyEvent(21); }
+PUSH Btn_Right   { _driver.SendKeyEvent(22); }
+PUSH Btn_Select  { _driver.SendKeyEvent(23); }
+
+/*══════════════════════════════════════════════════════════════════════════════════
+  PLAYBACK
+══════════════════════════════════════════════════════════════════════════════════*/
+
+PUSH Btn_Play        { _driver.SendKeyEvent(126); }
+PUSH Btn_Pause       { _driver.SendKeyEvent(127); }
+PUSH Btn_PlayPause   { _driver.SendKeyEvent(85);  }
+PUSH Btn_Stop        { _driver.SendKeyEvent(86);  }
+PUSH Btn_FastForward { _driver.SendKeyEvent(90);  }
+PUSH Btn_Rewind      { _driver.SendKeyEvent(89);  }
+PUSH Btn_SkipForward { _driver.SendKeyEvent(87);  }
+PUSH Btn_SkipBack    { _driver.SendKeyEvent(88);  }
+
+/*══════════════════════════════════════════════════════════════════════════════════
+  VOLUME / POWER
+══════════════════════════════════════════════════════════════════════════════════*/
+
+PUSH Vol_Up       { _driver.SendKeyEvent(24);  }
+PUSH Vol_Down     { _driver.SendKeyEvent(25);  }
+PUSH Vol_Mute     { _driver.SendKeyEvent(164); }
+PUSH Power_Toggle { _driver.SendKeyEvent(26);  }
+PUSH Btn_Search   { _driver.SendKeyEvent(84);  }
+PUSH Btn_Settings { _driver.SendKeyEvent(176); }
+
+/*══════════════════════════════════════════════════════════════════════════════════
+  APP LAUNCH / SHELL / TEXT / VOLUME / POLLING / WOL
+══════════════════════════════════════════════════════════════════════════════════*/
+
+CHANGE Launch_App$      { If (Len(Launch_App$) > 0) _driver.LaunchApp(Launch_App$);         }
+CHANGE Send_Shell$      { If (Len(Send_Shell$) > 0) _driver.ShellRaw(Send_Shell$);          }
+CHANGE Input_Text$      { If (Len(Input_Text$) > 0) _driver.SendText(Input_Text$);          }
+CHANGE Set_Volume_Level { _driver.SetVolumeDebounced(Set_Volume_Level);                      }
+PUSH   Poll_Now         { _driver.PollNow();                                                  }
+
+CALLBACK FUNCTION Hdl_AppLaunchEntry(INTEGER idx, STRING val)
+{
+    INTEGER i;
+    If (idx = 0)
+    {
+        For (i = 1 To 50)
+        {
+            App_Launch$[i] = "";
+        }
+        Return;
+    }
+    If (idx >= 1)
+    {
+        If (idx <= 50)
+        {
+            App_Launch$[idx] = val;
+        }
+    }
+}
+
+PUSH Get_Launchable_Apps { _driver.QueryLaunchableApps(); }
+
+PUSH WOL_Send
+{
+    If (Len(WOL_Mac$) > 0)
+        _driver.WakeOnLan(WOL_Mac$, WOL_Broadcast_IP$);
+    Else
+        Print("[FireTV] WOL: WOL_Mac$ parameter is empty!\n");
+}
+
+/*══════════════════════════════════════════════════════════════════════════════════
+  MAIN
+══════════════════════════════════════════════════════════════════════════════════*/
+
+Function Main()
+{
+    WaitForInitializationComplete();
+
+    RegisterDelegate(_driver, OnConnectionChanged,  Hdl_ConnectionChanged);
+    RegisterDelegate(_driver, OnFeedbackReceived,   Hdl_ShellFeedback);
+    RegisterDelegate(_driver, OnCurrentAppChanged,  Hdl_CurrentAppChanged);
+    RegisterDelegate(_driver, OnVolumeLevelChanged, Hdl_VolumeLevelChanged);
+    RegisterDelegate(_driver, OnNowPlayingApp,      Hdl_NowPlayingApp);
+    RegisterDelegate(_driver, OnIsPlaying,          Hdl_IsPlaying);
+    RegisterDelegate(_driver, OnAppLaunchEntry,     Hdl_AppLaunchEntry);
+
+    _driver.SetConsoleLog(Console_Log_Output_Enable);
+    _driver.SetPollingInterval(Poll_Interval_Sec);
+
+    // Pre-load RSA key on startup so first Connect() is instant.
+    // TCP connection is NOT opened until Connect input is pulsed.
+    If (Len(FireTV_IP$) > 0)
+        _driver.Initialize(FireTV_IP$, FireTV_Port, Key_Store_Path$);
+}

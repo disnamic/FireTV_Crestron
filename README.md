@@ -1,9 +1,46 @@
 # FireTV ADB Control – v2.0
 
-Crestron 4-Series SIMPL# module for controlling Amazon Fire TV via ADB over IP (TCP port 5555).
+Crestron SIMPL# module for controlling Amazon Fire TV via ADB over IP (TCP port 5555).
 Full RSA-2048 authentication, real-time feedback, launchable app discovery.
+Now supports both **3-Series and 4-Series** Crestron processors via a single SIMPL+ module.
 
-> **Platform:** 4-Series only (CP4, MC4). .NET Framework 4.7.2.
+> **Platforms:**
+> - **4-Series** (CP4, MC4) — `FireTVADB.clz` (.NET Framework 4.7.2)
+> - **3-Series** (CP3, MC3, PRO3, AV3) — `FireTVADB_3Series.clz` (.NET CF 3.5 / SimplSharp)
+
+---
+
+## 3-Series Support
+
+### What's new
+The `FireTV_Control_v2.0.usp` SIMPL+ module now uses compiler directives to automatically
+load the correct S# library for the target processor:
+
+```
+#IF_SERIES3
+#USER_SIMPLSHARP_LIBRARY "FireTVADB_3Series"
+#ENDIF
+#IF_SERIES4
+#USER_SIMPLSHARP_LIBRARY "FireTVADB"
+#ENDIF
+```
+
+A single `.usp` file compiles correctly for both platforms — no separate module needed.
+
+### 3-Series S# source
+The `FireTV_3series/` folder contains the full C# source for the 3-Series library
+(`FireTVADB_3Series.clz`), targeting .NET Compact Framework 3.5 / SimplSharp:
+
+| File | Description |
+|---|---|
+| `FireTVDriver.cs` | Main driver — ADB connection, commands, polling |
+| `AdbClient.cs` | ADB protocol client |
+| `AdbSocket.cs` | TCP socket wrapper |
+| `AdbAuth.cs` | RSA-2048 authentication |
+| `AdbMessage.cs` | ADB message framing |
+| `AdbAndroidKey.cs` | RSA key storage and loading |
+| `BigUInt2048.cs` | RSA math (no BigInteger on .NET CF 3.5) |
+| `WakeOnLan.cs` | Wake-on-LAN magic packet |
 
 ---
 
