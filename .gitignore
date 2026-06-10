@@ -1,0 +1,30 @@
+# Build output
+bin/
+obj/
+*.dll
+*.pdb
+*.clz
+
+# Visual Studio
+*.suo
+*.user
+*.cache
+.vs/
+
+# Crestron compiled
+*.lpz
+*.lpz.hash
+*.sig
+*.sm2
+*.smft
+*.dat
+*.dat.der
+*.ini
+*.arcv
+SPlsWork/
+
+# Claude Code
+.claude/
+
+# Log files
+*.txt
