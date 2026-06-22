@@ -272,3 +272,8 @@ Example commands:
 | Major | `2.0` | On request / breaking changes |
 | Minor | `2.x` | New features / new signals |
 | Bugfix | `2.x.x` | Bug fixes |
+
+
+This programming is not created by Crestron Electronics.
+This programming is not supported by Crestron Electronics’ support team.
+Crestron Electronics is not liable for any damage caused by this programming.
