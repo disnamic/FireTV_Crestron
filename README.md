@@ -8,6 +8,7 @@ Now supports both **3-Series and 4-Series** Crestron processors via a single SIM
 > - **4-Series** (CP4, MC4) — `FireTVADB.clz` (.NET Framework 4.7.2)
 > - **3-Series** (CP3, MC3, PRO3, AV3) — `FireTVADB_3Series.clz` (.NET CF 3.5 / SimplSharp)
 
+This does also work for Android based devices (Like Shield, Mi Box etc.) with ADB access. 
 ---
 
 ## 3-Series Support
