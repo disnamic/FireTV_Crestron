@@ -1,5 +1,9 @@
 # FireTV ADB Control – v2.0
 
+Important Note:
+This does only work with Android-Based FireTVs the new Vega OS FireTV Sticks are not supported as they don't have ADB access.
+
+
 Crestron SIMPL# module for controlling Amazon Fire TV via ADB over IP (TCP port 5555).
 Full RSA-2048 authentication, real-time feedback, launchable app discovery.
 Now supports both **3-Series and 4-Series** Crestron processors via a single SIMPL+ module.
